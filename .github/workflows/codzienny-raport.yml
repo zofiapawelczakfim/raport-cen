@@ -1,0 +1,63 @@
+name: Codzienny raport cen (dane.gov.pl)
+
+on:
+  schedule:
+    - cron: "17 0 * * *"
+    - cron: "47 1 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: raport-cen
+  cancel-in-progress: false
+
+jobs:
+  raport:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalacja
+        run: pip install openpyxl==3.1.5
+
+      - name: Generowanie cennika, XML i MD5
+        id: gen
+        env:
+          PAGES_URL: ${{ vars.PAGES_URL || format('https://{0}.github.io/{1}', github.repository_owner, github.event.repository.name) }}
+        run: |
+          set +e
+          python generuj.py --zrodlo cennik.xlsx --wyjscie docs --stan stan
+          kod=$?
+          echo "kod=$kod" >> "$GITHUB_OUTPUT"
+          if [ "$kod" != "0" ] && [ "$kod" != "3" ]; then exit $kod; fi
+
+      - name: Zapis i publikacja
+        run: |
+          git config user.name "raport-cen-bot"
+          git config user.email "raport-cen-bot@users.noreply.github.com"
+          git add docs stan
+          if git diff --cached --quiet; then
+            echo "Brak zmian do zapisania."
+          else
+            git commit -m "Raport cen $(TZ=Europe/Warsaw date +%F)"
+            git push
+          fi
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - id: deploy
+        uses: actions/deploy-pages@v4
